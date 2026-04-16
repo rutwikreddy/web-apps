@@ -1,16 +1,10 @@
 import os
 from datetime import date
-from urllib.parse import urlencode
 
-import requests
 import streamlit as st
 from authlib.integrations.requests_client import OAuth2Session
 
 st.set_page_config(page_title="Timesheet Tracker", page_icon="🕒", layout="wide")
-
-GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID"))
-GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET", os.getenv("GOOGLE_CLIENT_SECRET"))
-GOOGLE_REDIRECT_URI = st.secrets.get("GOOGLE_REDIRECT_URI", os.getenv("GOOGLE_REDIRECT_URI"))
 
 AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -18,6 +12,59 @@ USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo"
 SCOPE = ["openid", "email", "profile"]
 
 TASK_OPTIONS = ["Development", "Analysis", "Design", "Meeting"]
+
+
+def get_google_oauth_config():
+    client_id = st.session_state.get(
+        "google_client_id",
+        st.secrets.get("GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID")),
+    )
+    client_secret = st.session_state.get(
+        "google_client_secret",
+        st.secrets.get("GOOGLE_CLIENT_SECRET", os.getenv("GOOGLE_CLIENT_SECRET")),
+    )
+    redirect_uri = st.session_state.get(
+        "google_redirect_uri",
+        st.secrets.get("GOOGLE_REDIRECT_URI", os.getenv("GOOGLE_REDIRECT_URI")),
+    )
+    return client_id, client_secret, redirect_uri
+
+
+def create_oauth_session(client_id, client_secret, redirect_uri, state=None):
+    return OAuth2Session(
+        client_id,
+        client_secret,
+        scope=SCOPE,
+        redirect_uri=redirect_uri,
+        state=state,
+    )
+
+
+def authorize_url(client_id, client_secret, redirect_uri):
+    oauth = create_oauth_session(client_id, client_secret, redirect_uri)
+    auth_url, state = oauth.create_authorization_url(
+        AUTHORIZATION_ENDPOINT,
+        access_type="offline",
+        prompt="consent",
+    )
+    st.session_state.oauth_state = state
+    return auth_url
+
+
+def fetch_google_user(code, client_id, client_secret, redirect_uri):
+    oauth = create_oauth_session(
+        client_id,
+        client_secret,
+        redirect_uri,
+        state=st.session_state.get("oauth_state"),
+    )
+    token = oauth.fetch_token(
+        TOKEN_ENDPOINT,
+        code=code,
+        client_secret=client_secret,
+    )
+    user_info = oauth.get(USERINFO_ENDPOINT).json()
+    return token, user_info
 
 
 def init_rows():
@@ -35,51 +82,49 @@ def init_rows():
         ]
 
 
-def create_oauth_session(state=None):
+def create_oauth_session(client_id, client_secret, redirect_uri, state=None):
     return OAuth2Session(
-        GOOGLE_CLIENT_ID,
-        GOOGLE_CLIENT_SECRET,
+        client_id,
+        client_secret,
         scope=SCOPE,
-        redirect_uri=GOOGLE_REDIRECT_URI,
+        redirect_uri=redirect_uri,
         state=state,
     )
 
 
-def authorize_url():
-    oauth = create_oauth_session()
-    auth_url, state = oauth.create_authorization_url(
-        AUTHORIZATION_ENDPOINT,
-        access_type="offline",
-        prompt="consent",
+def fetch_google_user(code, client_id, client_secret, redirect_uri):
+    oauth = create_oauth_session(
+        client_id,
+        client_secret,
+        redirect_uri,
+        state=st.session_state.get("oauth_state"),
     )
-    st.session_state.oauth_state = state
-    return auth_url
-
-
-def fetch_google_user(code):
-    oauth = create_oauth_session(state=st.session_state.get("oauth_state"))
     token = oauth.fetch_token(
         TOKEN_ENDPOINT,
         code=code,
-        client_secret=GOOGLE_CLIENT_SECRET,
+        client_secret=client_secret,
     )
     user_info = oauth.get(USERINFO_ENDPOINT).json()
     return token, user_info
 
 
 def process_auth_callback():
+    client_id, client_secret, redirect_uri = get_google_oauth_config()
     query_params = st.experimental_get_query_params()
     code = query_params.get("code", [None])[0]
     state = query_params.get("state", [None])[0]
     if code and state and st.session_state.get("oauth_state") == state:
+        if not all([client_id, client_secret, redirect_uri]):
+            st.error("Google OAuth configuration is missing. Enter client details in the OAuth configuration section.")
+            return
         try:
-            _, user_info = fetch_google_user(code)
+            _, user_info = fetch_google_user(code, client_id, client_secret, redirect_uri)
             st.session_state.google_user = {
                 "email": user_info.get("email"),
                 "name": user_info.get("name"),
             }
             st.experimental_set_query_params()
-        except Exception as error:
+        except Exception:
             st.error("Google authentication failed. Check your redirect URI and app configuration.")
             st.session_state.google_user = None
 
@@ -104,27 +149,52 @@ def main():
         "Track daily work hours, task types, event details, approval status, and settlement amounts with Google authentication."
     )
 
-    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
-        st.warning(
-            "Google auth is not configured. Add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to Streamlit secrets or environment variables."
-        )
-
     init_rows()
     process_auth_callback()
+
+    client_id, client_secret, redirect_uri = get_google_oauth_config()
+    auth_configured = all([client_id, client_secret, redirect_uri])
+
+    st.info(
+        "Enter Google OAuth client details below if you want to sign in during this session."
+    )
+
+    with st.expander("Google OAuth configuration", expanded=not auth_configured):
+        st.text_input(
+            "Google Client ID",
+            value=client_id or "",
+            key="google_client_id",
+        )
+        st.text_input(
+            "Google Client Secret",
+            value=client_secret or "",
+            key="google_client_secret",
+            type="password",
+        )
+        st.text_input(
+            "Google Redirect URI",
+            value=redirect_uri or "http://localhost:8501/",
+            key="google_redirect_uri",
+        )
+        st.caption(
+            "These values are used only for the current session and are not stored persistently in the app."
+        )
 
     auth_col, _, status_col = st.columns([3, 1, 2])
     with auth_col:
         if st.session_state.get("google_user"):
             st.success(f"Signed in as {st.session_state.google_user['email']}")
         else:
-            if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI:
-                auth_url = authorize_url()
+            if auth_configured:
+                auth_url = authorize_url(client_id, client_secret, redirect_uri)
                 st.markdown(
                     f"<a href=\"{auth_url}\" style=\"display:inline-block;padding:10px 16px;background:#4285F4;color:white;border-radius:6px;text-decoration:none;\">Login with Google</a>",
                     unsafe_allow_html=True,
                 )
             else:
-                st.info("Configure Google OAuth values to enable login.")
+                st.warning(
+                    "Enter your Google OAuth credentials above to sign in on the fly."
+                )
 
     with status_col:
         if st.session_state.get("google_user"):
