@@ -198,7 +198,7 @@ def add_row():
 def main():
     st.title("Timesheet Tracking App")
     st.write(
-        "Track daily work hours, task types, event details, approval status, and settlement amounts with Google authentication."
+        "Track daily work hours, task types, task details, approval status, and settlement amounts with Google login."
     )
 
     init_rows()
@@ -207,47 +207,23 @@ def main():
     client_id, client_secret, redirect_uri = get_google_oauth_config()
     auth_configured = all([client_id, client_secret, redirect_uri])
 
-    st.info(
-        "Enter OAuth details below, then sign in with Google to approve and settle rows. "
-        "The timesheet state will also be saved to `timesheet_state.xlsx`."
-    )
-
-    with st.expander("Google OAuth configuration", expanded=not auth_configured):
-        st.text_input(
-            "Google Client ID",
-            value=client_id or "",
-            key="google_client_id",
-        )
-        st.text_input(
-            "Google Client Secret",
-            value=client_secret or "",
-            key="google_client_secret",
-            type="password",
-        )
-        st.text_input(
-            "Google Redirect URI",
-            value=redirect_uri or "http://localhost:8501/",
-            key="google_redirect_uri",
-        )
-        st.caption(
-            "These values are used only for the current session and are not stored permanently in the app."
+    if not auth_configured:
+        st.warning(
+            "Google OAuth is not configured. Add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to Streamlit secrets or environment variables."
         )
 
     auth_col, status_col = st.columns([3, 1])
     with auth_col:
         if st.session_state.get("google_user"):
             st.success(f"Signed in as {st.session_state.google_user['email']}")
+        elif auth_configured:
+            auth_url = authorize_url(client_id, client_secret, redirect_uri)
+            st.markdown(
+                f"<a href=\"{auth_url}\" style=\"display:inline-block;padding:12px 18px;background:#4285F4;color:white;border-radius:8px;text-decoration:none;font-weight:bold;\">Login with Google</a>",
+                unsafe_allow_html=True,
+            )
         else:
-            if auth_configured:
-                auth_url = authorize_url(client_id, client_secret, redirect_uri)
-                st.markdown(
-                    f"<a href=\"{auth_url}\" style=\"display:inline-block;padding:10px 16px;background:#4285F4;color:white;border-radius:6px;text-decoration:none;\">Login with Google</a>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.warning(
-                    "Provide client ID, secret, and redirect URI to enable login."
-                )
+            st.info("Configure Google OAuth credentials in secrets or environment variables, then refresh.")
 
     with status_col:
         if st.session_state.get("google_user"):
