@@ -108,9 +108,20 @@ def fetch_google_user(code, client_id, client_secret, redirect_uri):
     return token, user_info
 
 
+def get_query_params():
+    if hasattr(st, "experimental_get_query_params"):
+        return st.experimental_get_query_params()
+    return {}
+
+
+def set_query_params(**params):
+    if hasattr(st, "experimental_set_query_params"):
+        st.experimental_set_query_params(**params)
+
+
 def process_auth_callback():
     client_id, client_secret, redirect_uri = get_google_oauth_config()
-    query_params = st.experimental_get_query_params()
+    query_params = get_query_params()
     code = query_params.get("code", [None])[0]
     state = query_params.get("state", [None])[0]
     if code and state and st.session_state.get("oauth_state") == state:
@@ -123,7 +134,7 @@ def process_auth_callback():
                 "email": user_info.get("email"),
                 "name": user_info.get("name"),
             }
-            st.experimental_set_query_params()
+            set_query_params()
         except Exception:
             st.error("Google authentication failed. Check your redirect URI and app configuration.")
             st.session_state.google_user = None
